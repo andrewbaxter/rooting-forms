@@ -2,7 +2,7 @@ This provides traits and a derive macro for generating rooting HTML forms from s
 
 **Example**
 
-```
+```rust
 #[derive(rooting_forms::Form)]
 struct Creds {
     #[title("Your username")]
@@ -11,19 +11,30 @@ struct Creds {
     password: rooting_forms::Password,
 }
 
-let creds_form_state = MyStruct::new_form();
-modal.ref_push(el("div").extend(creds_form_state.elements().elements));
+...
+let ok_button = el("button").text("Ok");
+let creds_form_state = Creds::new_form("", None);
 ok_button.ref_on("click", move |_| {
-    let Some(creds) = creds_form_state.parse() else {
+    let Ok(creds) = creds_form_state.parse() else {
         return;
     };
     do_login(creds);
 });
+let modal =
+    el(
+        "div",
+    ).extend(vec![el("div").classes(&["form_grid"]).extend(creds_form_state.elements().elements), ok_button]);
+...
 ```
 
-# Parsing
+# Creating a form
 
-`parse()` returns `Some(..)` if there were no validation issues, otherwise `None`. Validation issues will automatically be displayed, and cleared the next time this is called.
+Call `::new_form` on your form type. The first argument can be empty (it's used for aria hints for nested fields). The second argument is `Some` if you want to pre-populate the form from existing data, for instance if you're editing something.
+
+`new_form` returns a state object.
+
+1. Call `elements()` on the state to get the form elements and add them to the page.
+2. Call `parse()` any number of times. It will either return a parsed object or an empty error. Any error messages will be automatically put in error elements near the relevant form fields. The error messages are cleared at the next `parse()`.
 
 # Styling
 
@@ -38,7 +49,3 @@ ok_button.ref_on("click", move |_| {
 - `.disable_hide` - for inactive form elements (ex: controls for a variant that's not selected)
 
 I imagine you'll place these in a grid, with the labels in column 1, option checkboxes in column 2, small inputs in column 3, and big inputs/subforms spanning all columns.
-
-# Future
-
-- A method for turning existing data into a form, rather than only new data

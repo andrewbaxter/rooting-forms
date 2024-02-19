@@ -1,3 +1,8 @@
+use std::{
+    cell::RefCell,
+    rc::Rc,
+};
+
 #[derive(rooting_forms::Form)]
 pub struct Alpha {
     #[title("A")]
@@ -15,4 +20,16 @@ pub enum Beta {
         #[title("Something")]
         nix: i32,
     },
+}
+
+#[derive(rooting_forms::Form)]
+pub struct Gamma {
+    #[title("G")]
+    pub g: Rc<RefCell<i32>>,
+}
+
+#[derive(rooting_forms::Form)]
+pub enum Delta {
+    #[title("D")]
+    G(Rc<RefCell<i32>>),
 }

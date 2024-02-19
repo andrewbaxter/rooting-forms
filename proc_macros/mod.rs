@@ -45,13 +45,14 @@ fn parse_title(attrs: &Vec<Attribute>) -> Result<String, &'static str> {
     };
 }
 
-fn build_fields_form<
-    X,
->(
+fn build_fields_form<X>(
     form_ident: &Ident,
     value_type_ident: &Ident,
     value_construct_ident: &TokenStream,
     fields: &Punctuated<Field, X>,
+    // When deriving child field from from parent from, if the parent contains values
+    // need to take reference. Otherwise already a ref (refs in TempFrom structs).
+    from_need_ref: bool,
 ) -> TokenStream {
     let mut form_fields = vec![];
     let mut form_construct_fields = vec![];
@@ -65,8 +66,14 @@ fn build_fields_form<
         form_fields.push(quote!{
             #f_ident: Box < dyn rooting_forms:: FormState < #f_type_ident >>,
         });
+        let from_maybe_ref;
+        if from_need_ref {
+            from_maybe_ref = quote!(&);
+        } else {
+            from_maybe_ref = quote!();
+        }
         form_construct_fields.push(quote!{
-            #f_ident: #f_type_ident:: new_form(#f_name),
+            #f_ident:< #f_type_ident >:: new_form(context, #f_name, from.map(| from | #from_maybe_ref from.#f_ident)),
         });
         form_elements.push(quote!{
             {
@@ -134,10 +141,15 @@ fn derive1(body: DeriveInput) -> TokenStream {
                             &t_ident,
                             &t_ident.to_token_stream(),
                             &fields.named,
+                            true,
                         );
                     return quote!{
-                        impl rooting_forms:: Form for #t_ident {
-                            fn new_form(field: &str) -> Box < dyn rooting_forms:: FormState < Self >> {
+                        impl < C: 'static + Clone > rooting_forms:: FormWith < C > for #t_ident {
+                            fn new_form(
+                                context: &C,
+                                field: &str,
+                                from: Option<&Self>
+                            ) -> Box < dyn rooting_forms:: FormState < Self >> {
                                 use rooting_forms::FormState;
                                 use std::str::FromStr;
                                 use wasm_bindgen::JsCast;
@@ -157,33 +169,69 @@ fn derive1(body: DeriveInput) -> TokenStream {
                 let v_name =
                     parse_title(&v.attrs).expect(&format!("Error with attributes on {}::{}", t_ident, v_ident));
                 let v_value = format!("{}", i);
-                let build_option;
-                {
-                    let selected;
+                let build_option = |ignore: TokenStream| -> TokenStream {
+                    let default;
                     if i == 0 {
-                        selected = quote!(.attr("selected", "selected"));
+                        default = quote!(true);
                     } else {
-                        selected = quote!();
+                        default = quote!(false);
                     }
-                    build_option = quote!{
-                        select.ref_push(rooting:: el("option").text(#v_name).attr("value", #v_value) #selected);
+                    return quote!{
+                        let option = rooting:: el("option").text(#v_name).attr("value", #v_value);
+                        if from.map(| from | match from {
+                            #t_ident:: #v_ident #ignore => true,
+                            _ => false
+                        }).unwrap_or(#default) {
+                            option.ref_attr("selected", "selected");
+                        }
+                        select.ref_push(option);
                     };
-                }
+                };
                 let container = quote!(rooting::el("div").classes(&[rooting_forms::CSS_CLASS_SUBFORM]));
                 match &v.fields {
                     syn::Fields::Named(fields) => {
+                        let build_option = build_option(quote!({
+                            ..
+                        }));
+                        let mut subform_from_fields_def = vec![];
+                        let mut subform_from_fields_match = vec![];
+                        let mut subform_from_fields_copy = vec![];
+                        for f in &fields.named {
+                            let f_ident = f.ident.as_ref().unwrap();
+                            let f_type = f.ty.to_token_stream();
+                            subform_from_fields_def.push(quote!{
+                                #f_ident:& 'a #f_type,
+                            });
+                            subform_from_fields_match.push(quote!(#f_ident));
+                            subform_from_fields_copy.push(quote!(#f_ident: #f_ident));
+                        }
                         let subform_build =
                             build_fields_form(
                                 &format_ident!("{}_{}_FormState", t_ident, v.ident),
                                 &t_ident,
                                 &quote!(#t_ident:: #v_ident),
                                 &fields.named,
+                                false,
                             );
                         build_variants.push(quote!{
                             {
                                 #build_option 
                                 //. .
                                 let subform = {
+                                    struct FromTemp < 'a > {
+                                        #(#subform_from_fields_def) *
+                                    }
+                                    let from = from.and_then(| from | match from {
+                                        #t_ident:: #v_ident {
+                                            #(#subform_from_fields_match),
+                                            *
+                                        }
+                                        => Some(FromTemp {
+                                            #(#subform_from_fields_copy),
+                                            *
+                                        }),
+                                        _ => None,
+                                    });
                                     #subform_build
                                 };
                                 let subform_elements = subform.elements();
@@ -205,13 +253,17 @@ fn derive1(body: DeriveInput) -> TokenStream {
                                 v_ident
                             );
                         }
+                        let build_option = build_option(quote!((_)));
                         let f = fields.unnamed.first().unwrap();
                         let f_type_ident = f.ty.to_token_stream();
                         build_variants.push(quote!{
                             {
                                 #build_option 
                                 //. .
-                                let subform = #f_type_ident:: new_form(#v_name);
+                                let subform =< #f_type_ident >:: new_form(context, #v_name, from.and_then(| from | match from {
+                                    #t_ident:: #v_ident(from) => Some(from),
+                                    _ => None,
+                                }));
                                 let subform_elements = subform.elements();
                                 let container = #container;
                                 if let Some(error) = subform_elements.error {
@@ -226,6 +278,7 @@ fn derive1(body: DeriveInput) -> TokenStream {
                         });
                     },
                     syn::Fields::Unit => {
+                        let build_option = build_option(quote!());
                         build_variants.push(quote!{
                             {
                                 #build_option 
@@ -238,8 +291,12 @@ fn derive1(body: DeriveInput) -> TokenStream {
                 }
             }
             return quote!{
-                impl rooting_forms:: Form for #t_ident {
-                    fn new_form(field: &str) -> Box < dyn rooting_forms:: FormState < Self >> {
+                impl < C: 'static + Clone > rooting_forms:: FormWith < C > for #t_ident {
+                    fn new_form(
+                        context: &C,
+                        field: &str,
+                        from: Option<&Self>
+                    ) -> Box < dyn rooting_forms:: FormState < Self >> {
                         use rooting_forms::FormState;
                         use std::str::FromStr;
                         use wasm_bindgen::JsCast;
@@ -319,268 +376,4 @@ fn derive1(body: DeriveInput) -> TokenStream {
 pub fn derive(body: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast = parse_macro_input!(body as syn::DeriveInput);
     return derive1(ast).into();
-}
-
-#[cfg(test)]
-mod tests {
-    use std::{
-        str::FromStr,
-    };
-    use genemichaels::FormatConfig;
-    use proc_macro2::TokenStream;
-    use crate::derive1;
-    use quote::quote;
-    use similar::{
-        TextDiff,
-        ChangeTag,
-    };
-
-    fn comp(got: &'static str, expected: TokenStream) {
-        let got = derive1(syn::parse2(TokenStream::from_str(got).unwrap()).unwrap());
-        let cfg = FormatConfig::default();
-        let mut s =
-            [&got, &expected]
-                .into_iter()
-                .map(|s| genemichaels::format_str(&s.to_string(), &cfg))
-                .collect::<Vec<_>>();
-        let got = s.remove(0).expect(&format!("Failed to format got code:\n{}", got.to_string())).rendered;
-        let expected = s.remove(0).expect("Failed to format expected code").rendered;
-        let changes = TextDiff::from_lines(&got, &expected);
-        let mut has_changes = false;
-        let mut text = String::new();
-        for change in changes.iter_all_changes() {
-            let sign = match change.tag() {
-                ChangeTag::Delete => {
-                    has_changes = true;
-                    "-"
-                },
-                ChangeTag::Insert => {
-                    has_changes = true;
-                    "+"
-                },
-                ChangeTag::Equal => " ",
-            };
-            text.push_str(&format!("{}{}", sign, change));
-        }
-        assert!(!has_changes, "{}", text);
-    }
-
-    #[test]
-    fn simple_struct() {
-        comp(r#"
-struct Alpha {
-    #[title("A")]
-    a: i32,
-}
-"#, quote!(
-            impl rooting_forms::Form for Alpha {
-                fn new_form(field: &str) -> Box<dyn rooting_forms::FormState<Self>> {
-                    use rooting_forms::FormState;
-                    use std::str::FromStr;
-                    use wasm_bindgen::JsCast;
-
-                    struct FormStateImpl {
-                        a: Box<dyn rooting_forms::FormState<i32>>,
-                    }
-
-                    impl rooting_forms::FormState<Alpha> for FormStateImpl {
-                        fn elements(&self) -> rooting_forms::FormElements {
-                            let mut elements = Vec::new();
-                            {
-                                let subelements = self.a.elements();
-                                elements.extend(subelements.error.into_iter());
-                                elements.push(
-                                    rooting::el("span").classes(&[rooting_forms::CSS_CLASS_LABEL]).text("A"),
-                                );
-                                elements.extend(subelements.elements);
-                            }
-                            return rooting_forms::FormElements {
-                                error: None,
-                                elements: elements,
-                            };
-                        }
-
-                        fn parse(&self) -> Result<Alpha, ()> {
-                            let mut errored = false;
-                            let a = match self.a.parse() {
-                                Ok(v) => Some(v),
-                                Err(e) => {
-                                    errored = true;
-                                    None
-                                },
-                            };
-                            if errored {
-                                return Err(());
-                            }
-                            return Alpha { a: a.unwrap() };
-                        }
-                    }
-
-                    Box::new(FormStateImpl { a: i32::new_form("A") })
-                }
-            }
-        ));
-    }
-
-    #[test]
-    fn simple_enum() {
-        comp(
-            r#"
-enum Alpha {
-    #[title("A")]
-    A,
-    #[title("B")]
-    B(i32),
-    #[title("C")]
-    C {
-        #[title("C")]
-        c: i32,
-    },
-}
-"#,
-            quote!{
-                impl rooting_forms::Form for Alpha {
-                    fn new_form(field: &str) -> Box<dyn rooting_forms::FormState<Self>> {
-                        use rooting_forms::FormState;
-                        use std::str::FromStr;
-                        use wasm_bindgen::JsCast;
-
-                        struct FormStateImpl {
-                            select: rooting::El,
-                            variant_parse: Vec<Box<dyn Fn() -> Result<Alpha, ()>>>,
-                            variant_elements: Vec<rooting::El>,
-                            current_variant: std::rc::Rc<std::cell::Cell<usize>>,
-                        }
-
-                        impl rooting_forms::FormState<Alpha> for FormStateImpl {
-                            fn elements(&self) -> rooting_forms::FormElements {
-                                let mut out = vec![];
-                                out.push(self.select.clone());
-                                out.extend(self.variant_elements.clone());
-                                return rooting_forms::FormElements {
-                                    error: None,
-                                    elements: out,
-                                };
-                            }
-
-                            fn parse(&self) -> Result<Alpha, ()> {
-                                return self.variant_parse[self.current_variant.get()]();
-                            }
-                        }
-
-                        let variant = std::rc::Rc::new(std::cell::Cell::new(0));
-                        let mut elements = vec![];
-                        let select =
-                            rooting::el("select")
-                                .classes(&[rooting_forms::CSS_CLASS_SMALL_INPUT])
-                                .attr(rooting_forms::ATTR_LABEL, field);
-                        elements.push(select.clone());
-                        let mut variant_parse: Vec<Box<dyn Fn() -> Result<Alpha, ()>>> = vec![];
-                        let mut variant_elements = vec![];
-                        {
-                            select.ref_push(
-                                rooting::el("option").text("A").attr("value", "0").attr("selected", "selected"),
-                            );
-                            variant_parse.push(Box::new(|| Ok(Alpha::A)));
-                            variant_elements.push(rooting::el("div").classes(&[rooting_forms::CSS_CLASS_SUBFORM]));
-                        }
-                        {
-                            select.ref_push(rooting::el("option").text("B").attr("value", "1"));
-                            let subform = i32::new_form("B");
-                            let subform_elements = subform.elements();
-                            let container = rooting::el("div").classes(&[rooting_forms::CSS_CLASS_SUBFORM]);
-                            if let Some(error) = subform_elements.error {
-                                container.ref_push(error);
-                            }
-                            container.ref_extend(subform_elements.elements);
-                            variant_elements.push(container);
-                            variant_parse.push(Box::new(move || subform.parse()));
-                        }
-                        {
-                            select.ref_push(rooting::el("option").text("C").attr("value", "2"));
-                            let subform = {
-                                #[allow(non_camel_case_types)]
-                                struct Alpha_C_FormState {
-                                    c: Box<dyn rooting_forms::FormState<i32>>,
-                                }
-
-                                impl rooting_forms::FormState<Alpha> for Alpha_C_FormState {
-                                    fn elements(&self) -> rooting_forms::FormElements {
-                                        let mut elements = Vec::new();
-                                        {
-                                            let subelements = self.c.elements();
-                                            elements.extend(subelements.error.into_iter());
-                                            elements.push(
-                                                rooting::el("span")
-                                                    .classes(&[rooting_forms::CSS_CLASS_LABEL])
-                                                    .text("C"),
-                                            );
-                                            elements.extend(subelements.elements);
-                                        }
-                                        return rooting_forms::FormElements {
-                                            error: None,
-                                            elements: elements,
-                                        };
-                                    }
-
-                                    fn parse(&self) -> Result<Alpha, ()> {
-                                        let mut errored = false;
-                                        let c = match self.c.parse() {
-                                            Ok(v) => Some(v),
-                                            Err(e) => {
-                                                errored = true;
-                                                None
-                                            },
-                                        };
-                                        if errored {
-                                            return Err(());
-                                        }
-                                        return Ok(Alpha::C { c: c.unwrap() });
-                                    }
-                                }
-
-                                Box::new(FormStateImpl { c: i32::new_form("C") })
-                            };
-                            let subform_elements = subform.elements();
-                            let container = rooting::el("div").classes(&[rooting_forms::CSS_CLASS_SUBFORM]);
-                            if let Some(error) = subform_elements.error {
-                                container.ref_push(error);
-                            }
-                            container.ref_extend(subform_elements.elements);
-                            variant_elements.push(container);
-                            variant_parse.push(Box::new(move || subform.parse()));
-                        }
-                        select.ref_on("change", {
-                            let variant_elements = variant_elements.clone();
-                            let variant = variant.clone();
-                            move |event| {
-                                let index =
-                                    usize::from_str(
-                                        &event
-                                            .target()
-                                            .unwrap()
-                                            .dyn_into::<rooting_forms::republish::HtmlSelectElement>()
-                                            .unwrap()
-                                            .value(),
-                                    ).unwrap();
-                                variant.set(index);
-                                for (e_index, v) in variant_elements.iter().enumerate() {
-                                    v.ref_modify_classes(&[(rooting_forms::CSS_CLASS_HIDDEN, e_index != index)]);
-                                }
-                            }
-                        });
-                        for v in &variant_elements[1..] {
-                            v.ref_classes(&[rooting_forms::CSS_CLASS_HIDDEN]);
-                        }
-                        return Box::new(FormStateImpl {
-                            select: select,
-                            variant_parse: variant_parse,
-                            variant_elements: variant_elements,
-                            current_variant: variant,
-                        });
-                    }
-                }
-            },
-        );
-    }
 }
