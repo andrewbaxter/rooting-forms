@@ -17,21 +17,14 @@ use crate::{
 };
 
 struct OptionFormState<C, T> {
-    elements: Vec<El>,
+    checked_el: El,
     subform: Box<dyn FormState<T>>,
     _pd: PhantomData<C>,
 }
 
 impl<C, T: FormWith<C>> FormState<Option<T>> for OptionFormState<C, T> {
-    fn elements(&self) -> FormElements {
-        return FormElements {
-            error: None,
-            elements: self.elements.clone(),
-        };
-    }
-
     fn parse(&self) -> Result<Option<T>, ()> {
-        let checked = self.elements[0].raw().dyn_ref::<HtmlInputElement>().unwrap().checked();
+        let checked = self.checked_el.raw().dyn_ref::<HtmlInputElement>().unwrap().checked();
         if checked {
             return Ok(Some(self.subform.parse()?));
         } else {
@@ -41,9 +34,13 @@ impl<C, T: FormWith<C>> FormState<Option<T>> for OptionFormState<C, T> {
 }
 
 impl<C: 'static, T: FormWith<C> + 'static> FormWith<C> for Option<T> {
-    fn new_form(context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
-        let subform = T::new_form(context, field, from.and_then(|x| x.as_ref()));
-        let subform_elements = subform.elements();
+    fn new_form_with_(
+        context: &C,
+        field: &str,
+        from: Option<&Self>,
+        depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
+        let (subform_elements, subform) = T::new_form_with_(context, field, from.and_then(|x| x.as_ref()), depth);
         let mut additional = vec![];
         additional.extend(subform_elements.error.iter().cloned());
         additional.extend(subform_elements.elements);
@@ -68,12 +65,15 @@ impl<C: 'static, T: FormWith<C> + 'static> FormWith<C> for Option<T> {
                 e.ref_modify_classes(&[(CSS_CLASS_HIDDEN, true)]);
             }
         }
-        let mut elements = vec![check];
+        let mut elements = vec![check.clone()];
         elements.extend(additional);
-        return Box::new(OptionFormState {
+        return (FormElements {
+            error: None,
             elements: elements,
+        }, Box::new(OptionFormState {
+            checked_el: check,
             subform: subform,
             _pd: Default::default(),
-        });
+        }));
     }
 }

@@ -15,12 +15,12 @@ use syn::{
 };
 
 fn parse_title(attrs: &Vec<Attribute>) -> Result<String, &'static str> {
-    match attrs.iter().find_map(|a| a.parse_meta().ok()).and_then(|m| match m {
+    match attrs.iter().find_map(|a| a.parse_meta().ok().and_then(|m| match m {
         syn::Meta::List(m) if m.path.to_token_stream().to_string() == "title" => {
             Some(m.nested)
         },
         _ => None,
-    }) {
+    })) {
         Some(m) => {
             if m.len() != 1 {
                 return Err("#[title()] needs exactly one literal string argument");
@@ -45,14 +45,13 @@ fn parse_title(attrs: &Vec<Attribute>) -> Result<String, &'static str> {
     };
 }
 
-fn build_fields_form<X>(
+fn build_fields_form<
+    X,
+>(
     form_ident: &Ident,
     value_type_ident: &Ident,
     value_construct_ident: &TokenStream,
     fields: &Punctuated<Field, X>,
-    // When deriving child field from from parent from, if the parent contains values
-    // need to take reference. Otherwise already a ref (refs in TempFrom structs).
-    from_need_ref: bool,
 ) -> TokenStream {
     let mut form_fields = vec![];
     let mut form_construct_fields = vec![];
@@ -61,32 +60,28 @@ fn build_fields_form<X>(
     let mut form_parse_assemble = vec![];
     for f in fields {
         let f_ident = f.ident.as_ref().unwrap();
+        let f_ident_elements = format_ident!("{}_elements", f_ident);
         let f_name = parse_title(&f.attrs).expect(&format!("Error with attributes on field {}", f_ident));
         let f_type_ident = f.ty.to_token_stream();
         form_fields.push(quote!{
             #f_ident: Box < dyn rooting_forms:: FormState < #f_type_ident >>,
         });
-        let from_maybe_ref;
-        if from_need_ref {
-            from_maybe_ref = quote!(&);
-        } else {
-            from_maybe_ref = quote!();
-        }
-        form_construct_fields.push(quote!{
-            #f_ident:< #f_type_ident >:: new_form(context, #f_name, from.map(| from | #from_maybe_ref from.#f_ident)),
-        });
         form_elements.push(quote!{
-            {
-                let subelements = self.#f_ident.elements();
-                elements.extend(subelements.error.into_iter());
-                elements.push(rooting:: el("span").classes(&[rooting_forms::CSS_CLASS_LABEL]).text(#f_name));
-                elements.extend(subelements.elements);
-            }
+            let(
+                #f_ident_elements,
+                #f_ident
+            ) =< #f_type_ident >:: new_form_with_(context, #f_name, from.map(| from |& from.#f_ident), depth);
+            elements.extend(#f_ident_elements.error.into_iter());
+            elements.push(rooting:: el("span").classes(&[rooting_forms::CSS_CLASS_LABEL]).text(#f_name));
+            elements.extend(#f_ident_elements.elements);
+        });
+        form_construct_fields.push(quote!{
+            #f_ident: #f_ident,
         });
         form_parse.push(quote!{
             let #f_ident = match self.#f_ident.parse() {
                 Ok(v) => Some(v),
-                Err(e) => {
+                Err(_) => {
                     errored = true;
                     None
                 }
@@ -97,19 +92,11 @@ fn build_fields_form<X>(
         });
     }
     return quote!{
-        #[allow(non_camel_case_types)] struct #form_ident {
+        let mut elements = Vec::new();
+        #(#form_elements) * #[allow(non_camel_case_types)] struct #form_ident {
             #(#form_fields) *
         }
         impl rooting_forms:: FormState < #value_type_ident > for #form_ident {
-            fn elements(&self) -> rooting_forms:: FormElements {
-                let mut elements = Vec::new();
-                #(#form_elements) * 
-                //. .
-                return rooting_forms:: FormElements {
-                    error: None,
-                    elements: elements
-                };
-            }
             fn parse(&self) -> Result < #value_type_ident,
             () > {
                 let mut errored = false;
@@ -123,9 +110,9 @@ fn build_fields_form<X>(
                 });
             }
         }
-        Box:: new(#form_ident {
+        (elements, Box:: new(#form_ident {
             #(#form_construct_fields) *
-        })
+        }))
     };
 }
 
@@ -141,19 +128,28 @@ fn derive1(body: DeriveInput) -> TokenStream {
                             &t_ident,
                             &t_ident.to_token_stream(),
                             &fields.named,
-                            true,
                         );
                     return quote!{
                         impl < C: 'static + Clone > rooting_forms:: FormWith < C > for #t_ident {
-                            fn new_form(
+                            fn new_form_with_(
                                 context: &C,
                                 field: &str,
-                                from: Option<&Self>
-                            ) -> Box < dyn rooting_forms:: FormState < Self >> {
+                                from: Option<&Self>,
+                                depth: usize
+                            ) ->(rooting_forms::FormElements, Box < dyn rooting_forms:: FormState < Self >>) {
+                                #[allow(unused_imports)]
                                 use rooting_forms::FormState;
+                                #[allow(unused_imports)]
                                 use std::str::FromStr;
+                                #[allow(unused_imports)]
                                 use wasm_bindgen::JsCast;
-                                #form_build
+                                let(elements, state) = {
+                                    #form_build
+                                };
+                                (rooting_forms::FormElements {
+                                    error: None,
+                                    elements: elements,
+                                }, state)
                             }
                         }
                     };
@@ -164,6 +160,7 @@ fn derive1(body: DeriveInput) -> TokenStream {
         },
         syn::Data::Enum(e) => {
             let mut build_variants = vec![];
+            let mut variant_to_int = vec![];
             for (i, v) in e.variants.iter().enumerate() {
                 let v_ident = &v.ident;
                 let v_name =
@@ -187,9 +184,14 @@ fn derive1(body: DeriveInput) -> TokenStream {
                         select.ref_push(option);
                     };
                 };
-                let container = quote!(rooting::el("div").classes(&[rooting_forms::CSS_CLASS_SUBFORM]));
                 match &v.fields {
                     syn::Fields::Named(fields) => {
+                        variant_to_int.push(quote!{
+                            #t_ident:: #v_ident {
+                                ..
+                            }
+                            => #i,
+                        });
                         let build_option = build_option(quote!({
                             ..
                         }));
@@ -200,10 +202,10 @@ fn derive1(body: DeriveInput) -> TokenStream {
                             let f_ident = f.ident.as_ref().unwrap();
                             let f_type = f.ty.to_token_stream();
                             subform_from_fields_def.push(quote!{
-                                #f_ident:& 'a #f_type,
+                                #f_ident: #f_type,
                             });
                             subform_from_fields_match.push(quote!(#f_ident));
-                            subform_from_fields_copy.push(quote!(#f_ident: #f_ident));
+                            subform_from_fields_copy.push(quote!(#f_ident: #f_ident.clone()));
                         }
                         let subform_build =
                             build_fields_form(
@@ -211,14 +213,13 @@ fn derive1(body: DeriveInput) -> TokenStream {
                                 &t_ident,
                                 &quote!(#t_ident:: #v_ident),
                                 &fields.named,
-                                false,
                             );
                         build_variants.push(quote!{
                             {
                                 #build_option 
                                 //. .
-                                let subform = {
-                                    struct FromTemp < 'a > {
+                                variant_parse.push(rooting_forms:: LazySubform:: new({
+                                    struct FromTemp {
                                         #(#subform_from_fields_def) *
                                     }
                                     let from = from.and_then(| from | match from {
@@ -232,16 +233,20 @@ fn derive1(body: DeriveInput) -> TokenStream {
                                         }),
                                         _ => None,
                                     });
-                                    #subform_build
-                                };
-                                let subform_elements = subform.elements();
-                                let container = #container;
-                                if let Some(error) = subform_elements.error {
-                                    container.ref_push(error);
-                                }
-                                container.ref_extend(subform_elements.elements);
-                                variant_elements.push(container);
-                                variant_parse.push(Box::new(move || subform.parse()));
+                                    let context = context.clone();
+                                    let depth = depth + 1;
+                                    move || {
+                                        let context = &context;
+                                        let from = from.as_ref();
+                                        let(elements, state) = {
+                                            #subform_build
+                                        };
+                                        (rooting_forms::FormElements {
+                                            error: None,
+                                            elements: elements,
+                                        }, state)
+                                    }
+                                }));
                             }
                         });
                     },
@@ -253,6 +258,9 @@ fn derive1(body: DeriveInput) -> TokenStream {
                                 v_ident
                             );
                         }
+                        variant_to_int.push(quote!{
+                            #t_ident:: #v_ident(_) => #i,
+                        });
                         let build_option = build_option(quote!((_)));
                         let f = fields.unnamed.first().unwrap();
                         let f_type_ident = f.ty.to_token_stream();
@@ -260,31 +268,59 @@ fn derive1(body: DeriveInput) -> TokenStream {
                             {
                                 #build_option 
                                 //. .
-                                let subform =< #f_type_ident >:: new_form(context, #v_name, from.and_then(| from | match from {
-                                    #t_ident:: #v_ident(from) => Some(from),
-                                    _ => None,
+                                variant_parse.push(rooting_forms:: LazySubform:: new({
+                                    let from = from.and_then(| from | match from {
+                                        #t_ident:: #v_ident(from) => Some(from.clone()),
+                                        _ => None,
+                                    });
+                                    let context = context.clone();
+                                    move || {
+                                        let context = &context;
+                                        let(
+                                            elements,
+                                            state
+                                        ) =< #f_type_ident >:: new_form_with_(
+                                            context,
+                                            #v_name,
+                                            from.as_ref(),
+                                            depth + 1
+                                        );
+                                        return(
+                                            elements,
+                                            Box:: new(
+                                                rooting_forms:: VariantWrapFormState::< C,
+                                                _,
+                                                _ >:: new(state, | x | #t_ident:: #v_ident(x))
+                                            )
+                                        );
+                                    }
                                 }));
-                                let subform_elements = subform.elements();
-                                let container = #container;
-                                if let Some(error) = subform_elements.error {
-                                    container.ref_push(error);
-                                }
-                                container.ref_extend(subform_elements.elements);
-                                variant_elements.push(container);
-                                variant_parse.push(
-                                    Box:: new(move || subform.parse().map(| v | #t_ident:: #v_ident(v)))
-                                );
                             }
                         });
                     },
                     syn::Fields::Unit => {
+                        variant_to_int.push(quote!{
+                            #t_ident:: #v_ident => #i,
+                        });
                         let build_option = build_option(quote!());
                         build_variants.push(quote!{
                             {
                                 #build_option 
                                 //. .
-                                variant_parse.push(Box:: new(|| Ok(#t_ident:: #v_ident)));
-                                variant_elements.push(#container);
+                                variant_parse.push(rooting_forms:: LazySubform:: new({
+                                    || {
+                                        (
+                                            rooting_forms::FormElements {
+                                                error: None,
+                                                elements: vec![],
+                                            },
+                                            Box:: new(
+                                                rooting_forms:: VariantUnitFormState::< C,
+                                                _ >:: new(|| #t_ident:: #v_ident,)
+                                            )
+                                        )
+                                    }
+                                }));
                             }
                         });
                     },
@@ -292,53 +328,57 @@ fn derive1(body: DeriveInput) -> TokenStream {
             }
             return quote!{
                 impl < C: 'static + Clone > rooting_forms:: FormWith < C > for #t_ident {
-                    fn new_form(
+                    fn new_form_with_(
                         context: &C,
                         field: &str,
-                        from: Option<&Self>
-                    ) -> Box < dyn rooting_forms:: FormState < Self >> {
+                        from: Option<&Self>,
+                        depth: usize
+                    ) ->(rooting_forms::FormElements, Box < dyn rooting_forms:: FormState < Self >>) {
+                        #[allow(unused_imports)]
                         use rooting_forms::FormState;
+                        #[allow(unused_imports)]
                         use std::str::FromStr;
+                        #[allow(unused_imports)]
                         use wasm_bindgen::JsCast;
-                        struct FormStateImpl {
-                            select: rooting::El,
-                            variant_parse: Vec < Box < dyn Fn() -> Result < #t_ident,
-                            () >>>,
-                            variant_elements: Vec<rooting::El>,
-                            current_variant: std::rc::Rc<std::cell::Cell<usize>>,
+                        struct FormStateImpl < C: 'static + Clone,
+                        T: rooting_forms:: FormWith < C >> {
+                            variant_parse: Vec<rooting_forms::LazySubform<C, T>>,
+                            current_variant: std::rc::Rc<std::cell::Cell<usize>>
                         }
-                        impl rooting_forms:: FormState < #t_ident > for FormStateImpl {
-                            fn elements(&self) -> rooting_forms::FormElements {
-                                let mut out = vec![];
-                                out.push(self.select.clone());
-                                out.extend(self.variant_elements.clone());
-                                return rooting_forms::FormElements {
-                                    error: None,
-                                    elements: out,
-                                };
-                            }
-                            fn parse(&self) -> Result < #t_ident,
-                            () > {
-                                return self.variant_parse[self.current_variant.get()]();
+                        impl < C: 'static + Clone,
+                        T: rooting_forms:: FormWith < C >> rooting_forms:: FormState < T > for FormStateImpl < C,
+                        T > {
+                            fn parse(&self) -> Result<T, ()> {
+                                return self.variant_parse[self.current_variant.get()].parse();
                             }
                         }
-                        let variant = std::rc::Rc::new(std::cell::Cell::new(0));
+                        let variant = std:: rc:: Rc:: new(std:: cell:: Cell:: new(match from {
+                            Some(v) => match v {
+                                #(#variant_to_int) *
+                            },
+                            None => 0,
+                        }));
                         let mut elements = vec![];
                         let select =
                             rooting::el("select")
                                 .classes(&[rooting_forms::CSS_CLASS_SMALL_INPUT])
                                 .attr(rooting_forms::ATTR_LABEL, field);
                         elements.push(select.clone());
-                        let mut variant_parse: Vec < Box < dyn Fn() -> Result < #t_ident,
-                        () >>>
-                        //. 
+                        let mut variant_parse: Vec < rooting_forms:: LazySubform < C,
+                        #t_ident >>
+                        //. .
                         = vec ![];
-                        let mut variant_elements = vec![];
                         #(#build_variants) * 
                         //. .
+                        let subform = rooting:: el(
+                            "div"
+                        ).classes(
+                            &[rooting_forms::CSS_CLASS_SUBFORM, &rooting_forms::css_class_depth(depth)]
+                        ).extend(variant_parse[variant.get()].elements());
                         select.ref_on("change", {
-                            let variant_elements = variant_elements.clone();
+                            let variant_parse = variant_parse.clone();
                             let variant = variant.clone();
+                            let subform = subform.clone();
                             move |event| {
                                 let index =
                                     usize::from_str(
@@ -350,20 +390,16 @@ fn derive1(body: DeriveInput) -> TokenStream {
                                             .value(),
                                     ).unwrap();
                                 variant.set(index);
-                                for (e_index, v) in variant_elements.iter().enumerate() {
-                                    v.ref_modify_classes(&[(rooting_forms::CSS_CLASS_HIDDEN, e_index != index)]);
-                                }
+                                subform.ref_clear().ref_extend(variant_parse[variant.get()].elements());
                             }
                         });
-                        for v in &variant_elements[1..] {
-                            v.ref_classes(&[rooting_forms::CSS_CLASS_HIDDEN]);
-                        }
-                        return Box::new(FormStateImpl {
-                            select: select,
+                        return (rooting_forms::FormElements {
+                            error: None,
+                            elements: vec![select, subform],
+                        }, Box::new(FormStateImpl {
                             variant_parse: variant_parse,
-                            variant_elements: variant_elements,
                             current_variant: variant,
-                        });
+                        }));
                     }
                 }
             }

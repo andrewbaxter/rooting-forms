@@ -13,9 +13,6 @@ pub struct FormElements {
 
 /// An object representing a form (the state of the form).
 pub trait FormState<T> {
-    /// Get the elements for this form or subform.
-    fn elements(&self) -> FormElements;
-
     /// Parse the elements into the resulting type.
     fn parse(&self) -> Result<T, ()>;
 }
@@ -32,7 +29,7 @@ pub trait Form {
     ///
     /// * `from` - data used to populate the initial form, for example if creating a form
     ///   to edit existing data.
-    fn new_form(field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>>;
+    fn new_form(field: &str, from: Option<&Self>) -> (FormElements, Box<dyn FormState<Self>>);
 }
 
 /// Like `Form` but allows passing in additional context, for custom elements that
@@ -45,12 +42,20 @@ pub trait FormWith<C> {
     ///   elements. This is forwarded to all nested `new_form` calls.
     ///
     /// See `Form` for the other fields.
-    fn new_form(context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>>;
+    fn new_form_with(context: &C, field: &str, from: Option<&Self>) -> (FormElements, Box<dyn FormState<Self>>) {
+        return Self::new_form_with_(context, field, from, 0);
+    }
+    fn new_form_with_(
+        context: &C,
+        field: &str,
+        from: Option<&Self>,
+        depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>);
 }
 
 impl<T: FormWith<()>> Form for T {
-    fn new_form(field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
-        return <T as FormWith<()>>::new_form(&(), field, from);
+    fn new_form(field: &str, from: Option<&Self>) -> (FormElements, Box<dyn FormState<Self>>) {
+        return T::new_form_with(&(), field, from);
     }
 }
 pub mod css;
@@ -65,6 +70,9 @@ pub mod impl_bool;
 pub mod impl_option;
 pub mod impl_unit_structs;
 pub mod impl_vec;
+pub mod impl_macroutil;
+
+pub use impl_macroutil::*;
 
 /// Republished types for macro use.
 pub mod republish {

@@ -1,4 +1,5 @@
 use std::{
+    cell::Cell,
     convert::Infallible,
     fmt::Display,
     str::FromStr,
@@ -8,7 +9,11 @@ use rooting::{
     el,
 };
 use wasm_bindgen::JsCast;
-use web_sys::HtmlInputElement;
+use web_sys::{
+    Element,
+    HtmlInputElement,
+    HtmlTextAreaElement,
+};
 use crate::{
     css::{
         ATTR_LABEL,
@@ -44,6 +49,50 @@ impl FromStr for BigString {
     }
 }
 
+struct TextareaFormState {
+    el: El,
+}
+
+impl FormState<BigString> for TextareaFormState {
+    fn parse(&self) -> Result<BigString, ()> {
+        return Ok(BigString(self.el.raw().dyn_ref::<HtmlTextAreaElement>().unwrap().value()));
+    }
+}
+
+impl<C> FormWith<C> for BigString {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
+        let textarea =
+            el("textarea")
+                .classes(&[CSS_CLASS_SMALL_INPUT])
+                .attr(ATTR_LABEL, field)
+                .text(from.map(|x| x.0.as_str()).unwrap_or(""))
+                .on("keydown", |e| {
+                    let area = e.target().unwrap().dyn_into::<Element>().unwrap();
+                    area.set_attribute("style", &format!("height: {}px", area.scroll_height() + 1)).unwrap();
+                })
+                .on_resize({
+                    let last_w = Cell::new(-1.);
+                    move |e, w, _h| {
+                        if (w - last_w.get()).abs() < 5. {
+                            return;
+                        }
+                        last_w.set(w);
+                        let area = e.raw().dyn_into::<Element>().unwrap();
+                        area.set_attribute("style", &format!("height: {}px", area.scroll_height() + 1)).unwrap();
+                    }
+                });
+        return (FormElements {
+            error: None,
+            elements: vec![textarea.clone()],
+        }, Box::new(TextareaFormState { el: textarea }));
+    }
+}
+
 /// A helper form type for rust types that implement `FromStr`.
 pub struct FromStrFormState {
     el: El,
@@ -54,10 +103,10 @@ impl FromStrFormState {
     pub fn new<
         E: Display,
         T: FromStr<Err = E>,
-    >(label: &str, type_: &str, initial_value: &str) -> Box<dyn FormState<T>> {
+    >(label: &str, type_: &str, initial_value: &str) -> (FormElements, Box<dyn FormState<T>>) {
         let error_el = el("span").classes(&[CSS_CLASS_ERROR]);
-        return Box::new(FromStrFormState {
-            el: el("input")
+        let input_el =
+            el("input")
                 .classes(&[CSS_CLASS_SMALL_INPUT])
                 .attr(ATTR_LABEL, label)
                 .attr("type", type_)
@@ -77,20 +126,18 @@ impl FromStrFormState {
                         }
                         error_el.ref_text("");
                     }
-                }),
+                });
+        return (FormElements {
+            error: Some(error_el.clone()),
+            elements: vec![input_el.clone()],
+        }, Box::new(FromStrFormState {
+            el: input_el,
             error_el: error_el,
-        });
+        }));
     }
 }
 
 impl<E: Display, T: FromStr<Err = E>> FormState<T> for FromStrFormState {
-    fn elements(&self) -> FormElements {
-        return FormElements {
-            error: Some(self.error_el.clone()),
-            elements: vec![self.el.clone()],
-        };
-    }
-
     fn parse(&self) -> Result<T, ()> {
         match T::from_str(&self.el.raw().dyn_ref::<HtmlInputElement>().unwrap().value()) {
             Ok(v) => {
@@ -106,7 +153,12 @@ impl<E: Display, T: FromStr<Err = E>> FormState<T> for FromStrFormState {
 }
 
 impl<C> FormWith<C> for String {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, String>(
             field,
             "text",
@@ -116,7 +168,12 @@ impl<C> FormWith<C> for String {
 }
 
 impl<C> FormWith<C> for Password {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Password>(
             field,
             "password",
@@ -125,18 +182,13 @@ impl<C> FormWith<C> for Password {
     }
 }
 
-impl<C> FormWith<C> for BigString {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
-        return FromStrFormState::new::<_, BigString>(
-            field,
-            "text",
-            from.as_ref().map(|x| x.0.as_str()).unwrap_or(""),
-        );
-    }
-}
-
 impl<C> FormWith<C> for u8 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -146,7 +198,12 @@ impl<C> FormWith<C> for u8 {
 }
 
 impl<C> FormWith<C> for u16 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -156,7 +213,12 @@ impl<C> FormWith<C> for u16 {
 }
 
 impl<C> FormWith<C> for u32 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -166,7 +228,12 @@ impl<C> FormWith<C> for u32 {
 }
 
 impl<C> FormWith<C> for u64 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -176,7 +243,12 @@ impl<C> FormWith<C> for u64 {
 }
 
 impl<C> FormWith<C> for i8 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -186,7 +258,12 @@ impl<C> FormWith<C> for i8 {
 }
 
 impl<C> FormWith<C> for i16 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -196,7 +273,12 @@ impl<C> FormWith<C> for i16 {
 }
 
 impl<C> FormWith<C> for i32 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -206,7 +288,12 @@ impl<C> FormWith<C> for i32 {
 }
 
 impl<C> FormWith<C> for i64 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -216,7 +303,12 @@ impl<C> FormWith<C> for i64 {
 }
 
 impl<C> FormWith<C> for f32 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",
@@ -226,7 +318,12 @@ impl<C> FormWith<C> for f32 {
 }
 
 impl<C> FormWith<C> for f64 {
-    fn new_form(_context: &C, field: &str, from: Option<&Self>) -> Box<dyn FormState<Self>> {
+    fn new_form_with_(
+        _context: &C,
+        field: &str,
+        from: Option<&Self>,
+        _depth: usize,
+    ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
             "text",

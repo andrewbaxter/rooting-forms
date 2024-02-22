@@ -17,18 +17,23 @@ pub const CSS_CLASS_OPTION_ENABLE: &'static str = "form_input_option";
 pub const CSS_CLASS_ERROR: &'static str = "form_error";
 
 /// Used for nested struct/enum fields, namely within variants or options.
-pub const CSS_CLASS_SUBFORM: &'static str = "subform";
+pub const CSS_CLASS_SUBFORM: &'static str = "form_subform";
+pub const CSS_CLASS_BUTTON_ICON: &'static str = "form_button_icon";
 
 /// Used to hide disabled variants - hidden to keep user input in case they
 /// re-enable later.
 pub const CSS_CLASS_HIDDEN: &'static str = "disable_hide";
 pub const CSS_CLASS_VEC: &'static str = "form_vec";
-pub const CSS_CLASS_VEC_ITEM: &'static str = "form_vec_item";
+pub const CSS_CLASS_VEC_ITEMS: &'static str = "form_vec_items";
 pub const CSS_CLASS_VEC_ITEM_HEADER: &'static str = "form_vec_item_header";
-pub const CSS_CLASS_VEC_DELETE: &'static str = "form_vec_item_delete";
-pub const CSS_CLASS_VEC_ADD: &'static str = "form_vec_item_add";
-pub const CSS_CLASS_VEC_MOVE_DOWN: &'static str = "form_vec_move_up";
-pub const CSS_CLASS_VEC_MOVE_UP: &'static str = "form_vec_move_down";
+pub const CSS_CLASS_BUTTON_ICON_DELETE: &'static str = "form_button_delete";
+pub const CSS_CLASS_BUTTON_ICON_ADD: &'static str = "form_button_add";
+pub const CSS_CLASS_BUTTON_ICON_MOVE_DOWN: &'static str = "form_button_move_up";
+pub const CSS_CLASS_BUTTON_ICON_MOVE_UP: &'static str = "form_button_move_down";
 
 /// This should be used on all inputs, since `<label>` isn't used.
 pub const ATTR_LABEL: &'static str = "aria-label";
+
+pub fn css_class_depth(depth: usize) -> String {
+    return format!("form_depth_m7_{}", 1 + depth % 7);
+}

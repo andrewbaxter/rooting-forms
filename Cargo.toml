@@ -1,6 +1,6 @@
 [package]
 name = "rooting-forms"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 license = "ISC"
 description = "Generates HTML (rooting) forms from structures"
@@ -17,9 +17,10 @@ serde = ["dep:serde"]
 [dependencies]
 serde = { version = "1", optional = true }
 rooting = "0.1"
-rooting_forms_proc_macros = { version = "0.0.3", path = "proc_macros" }
+rooting_forms_proc_macros = { version = "0.0.4", path = "proc_macros" }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
     "HtmlSelectElement",
     "HtmlInputElement",
+    "HtmlTextAreaElement",
 ] }

@@ -1,6 +1,6 @@
 [package]
 name = "rooting_forms_proc_macros"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 license = "ISC"
 description = "Generates HTML (rooting) forms from structures (helper crate)"
