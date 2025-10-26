@@ -72,7 +72,7 @@ fn build_fields_form<
                 #f_ident
             ) =< #f_type_ident >:: new_form_with_(context, #f_name, from.map(| from |& from.#f_ident), depth);
             elements.extend(#f_ident_elements.error.into_iter());
-            elements.push(rooting:: el("span").classes(&[rooting_forms::CSS_CLASS_LABEL]).text(#f_name));
+            elements.push(rooting:: el("span").classes(&[rooting_forms::css::CSS_CLASS_LABEL]).text(#f_name));
             elements.extend(#f_ident_elements.elements);
         });
         form_construct_fields.push(quote!{
@@ -132,9 +132,9 @@ fn derive1(body: DeriveInput) -> TokenStream {
                     return quote!{
                         impl < C: 'static + Clone > rooting_forms:: FormWith < C > for #t_ident {
                             fn new_form_with_(
-                                context: &C,
-                                field: &str,
-                                from: Option<&Self>,
+                                context: & C,
+                                field: & str,
+                                from: Option <& Self >,
                                 depth: usize
                             ) ->(rooting_forms::FormElements, Box < dyn rooting_forms:: FormState < Self >>) {
                                 #[allow(unused_imports)]
@@ -218,7 +218,7 @@ fn derive1(body: DeriveInput) -> TokenStream {
                             {
                                 #build_option 
                                 //. .
-                                variant_parse.push(rooting_forms:: LazySubform:: new({
+                                variant_parse.push(rooting_forms:: impl_macroutil:: LazySubform:: new({
                                     struct FromTemp {
                                         #(#subform_from_fields_def) *
                                     }
@@ -268,7 +268,7 @@ fn derive1(body: DeriveInput) -> TokenStream {
                             {
                                 #build_option 
                                 //. .
-                                variant_parse.push(rooting_forms:: LazySubform:: new({
+                                variant_parse.push(rooting_forms:: impl_macroutil:: LazySubform:: new({
                                     let from = from.and_then(| from | match from {
                                         #t_ident:: #v_ident(from) => Some(from.clone()),
                                         _ => None,
@@ -288,7 +288,7 @@ fn derive1(body: DeriveInput) -> TokenStream {
                                         return(
                                             elements,
                                             Box:: new(
-                                                rooting_forms:: VariantWrapFormState::< C,
+                                                rooting_forms:: impl_macroutil:: VariantWrapFormState::< C,
                                                 _,
                                                 _ >:: new(state, | x | #t_ident:: #v_ident(x))
                                             )
@@ -307,7 +307,7 @@ fn derive1(body: DeriveInput) -> TokenStream {
                             {
                                 #build_option 
                                 //. .
-                                variant_parse.push(rooting_forms:: LazySubform:: new({
+                                variant_parse.push(rooting_forms:: impl_macroutil:: LazySubform:: new({
                                     || {
                                         (
                                             rooting_forms::FormElements {
@@ -315,7 +315,7 @@ fn derive1(body: DeriveInput) -> TokenStream {
                                                 elements: vec![],
                                             },
                                             Box:: new(
-                                                rooting_forms:: VariantUnitFormState::< C,
+                                                rooting_forms:: impl_macroutil:: VariantUnitFormState::< C,
                                                 _ >:: new(|| #t_ident:: #v_ident,)
                                             )
                                         )
@@ -329,9 +329,9 @@ fn derive1(body: DeriveInput) -> TokenStream {
             return quote!{
                 impl < C: 'static + Clone > rooting_forms:: FormWith < C > for #t_ident {
                     fn new_form_with_(
-                        context: &C,
-                        field: &str,
-                        from: Option<&Self>,
+                        context: & C,
+                        field: & str,
+                        from: Option <& Self >,
                         depth: usize
                     ) ->(rooting_forms::FormElements, Box < dyn rooting_forms:: FormState < Self >>) {
                         #[allow(unused_imports)]
@@ -342,8 +342,9 @@ fn derive1(body: DeriveInput) -> TokenStream {
                         use wasm_bindgen::JsCast;
                         struct FormStateImpl < C: 'static + Clone,
                         T: rooting_forms:: FormWith < C >> {
-                            variant_parse: Vec<rooting_forms::LazySubform<C, T>>,
-                            current_variant: std::rc::Rc<std::cell::Cell<usize>>
+                            variant_parse: Vec < rooting_forms:: impl_macroutil:: LazySubform < C,
+                            T >>,
+                            current_variant: std:: rc:: Rc < std:: cell:: Cell < usize >>
                         }
                         impl < C: 'static + Clone,
                         T: rooting_forms:: FormWith < C >> rooting_forms:: FormState < T > for FormStateImpl < C,
@@ -361,11 +362,11 @@ fn derive1(body: DeriveInput) -> TokenStream {
                         let mut elements = vec![];
                         let select =
                             rooting::el("select")
-                                .classes(&[rooting_forms::CSS_CLASS_SMALL_INPUT])
-                                .attr(rooting_forms::ATTR_LABEL, field);
+                                .classes(&[rooting_forms::css::CSS_CLASS_SMALL_INPUT])
+                                .attr(rooting_forms::css::ATTR_LABEL, field);
                         elements.push(select.clone());
-                        let mut variant_parse: Vec < rooting_forms:: LazySubform < C,
-                        #t_ident >>
+                        let mut variant_parse: Vec < rooting_forms:: impl_macroutil:: LazySubform < C,
+                        #t_ident >> 
                         //. .
                         = vec ![];
                         #(#build_variants) * 
@@ -373,7 +374,7 @@ fn derive1(body: DeriveInput) -> TokenStream {
                         let subform = rooting:: el(
                             "div"
                         ).classes(
-                            &[rooting_forms::CSS_CLASS_SUBFORM, &rooting_forms::css_class_depth(depth)]
+                            &[rooting_forms::css::CSS_CLASS_SUBFORM, &rooting_forms::css::css_class_depth(depth)]
                         ).extend(variant_parse[variant.get()].elements());
                         select.ref_on("change", {
                             let variant_parse = variant_parse.clone();

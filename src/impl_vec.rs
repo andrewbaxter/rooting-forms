@@ -1,32 +1,36 @@
-use std::{
-    cell::{
-        Cell,
-        RefCell,
+use {
+    crate::{
+        css::{
+            css_class_depth,
+            ATTR_LABEL,
+            CSS_CLASS_BUTTON_ICON,
+            CSS_CLASS_BUTTON_ICON_ADD,
+            CSS_CLASS_BUTTON_ICON_DELETE,
+            CSS_CLASS_BUTTON_ICON_MOVE_DOWN,
+            CSS_CLASS_BUTTON_ICON_MOVE_UP,
+            CSS_CLASS_SUBFORM,
+            CSS_CLASS_VEC,
+            CSS_CLASS_VEC_ITEMS,
+            CSS_CLASS_VEC_ITEM_HEADER,
+        },
+        FormElements,
+        FormState,
+        FormWith,
     },
-    marker::PhantomData,
-    rc::Rc,
-};
-use rooting::{
-    el,
-    Container,
-    ContainerEntry,
-    El,
-};
-use crate::{
-    css_class_depth,
-    FormElements,
-    FormState,
-    FormWith,
-    ATTR_LABEL,
-    CSS_CLASS_BUTTON_ICON,
-    CSS_CLASS_BUTTON_ICON_ADD,
-    CSS_CLASS_BUTTON_ICON_DELETE,
-    CSS_CLASS_BUTTON_ICON_MOVE_DOWN,
-    CSS_CLASS_BUTTON_ICON_MOVE_UP,
-    CSS_CLASS_SUBFORM,
-    CSS_CLASS_VEC,
-    CSS_CLASS_VEC_ITEMS,
-    CSS_CLASS_VEC_ITEM_HEADER,
+    rooting::{
+        el,
+        Container,
+        ContainerEntry,
+        El,
+    },
+    std::{
+        cell::{
+            Cell,
+            RefCell,
+        },
+        marker::PhantomData,
+        rc::Rc,
+    },
 };
 
 struct Item_<T> {

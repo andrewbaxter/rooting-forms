@@ -1,40 +1,32 @@
-use std::{
-    cell::Cell,
-    convert::Infallible,
-    fmt::Display,
-    str::FromStr,
-};
-use rooting::{
-    El,
-    el,
-};
-use wasm_bindgen::JsCast;
-use web_sys::{
-    Element,
-    HtmlInputElement,
-    HtmlTextAreaElement,
-};
-use crate::{
-    css::{
-        ATTR_LABEL,
-        CSS_CLASS_ERROR,
-        CSS_CLASS_SMALL_INPUT,
+use {
+    crate::{
+        css::{
+            err_el,
+            ATTR_LABEL,
+            CSS_CLASS_SMALL_INPUT,
+            CSS_CLASS_TEXT,
+        },
+        FormElements,
+        FormState,
+        FormWith,
     },
-    FormWith,
-    FormElements,
-    FormState,
+    gloo::timers::callback::Timeout,
+    rooting::{
+        el,
+        El,
+    },
+    std::{
+        cell::RefCell,
+        convert::Infallible,
+        fmt::Display,
+        str::FromStr,
+    },
+    wasm_bindgen::JsCast,
+    web_sys::{
+        HtmlInputElement,
+        HtmlTextAreaElement,
+    },
 };
-
-/// A minimal string wrapper that creates a password form input.
-pub struct Password(pub String);
-
-impl FromStr for Password {
-    type Err = Infallible;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        return Ok(Password(s.to_string()));
-    }
-}
 
 /// A minimal string wrapper that creates a textarea form input.
 #[derive(Clone)]
@@ -49,11 +41,11 @@ impl FromStr for BigString {
     }
 }
 
-struct TextareaFormState {
+struct BigStringFormState {
     el: El,
 }
 
-impl FormState<BigString> for TextareaFormState {
+impl FormState<BigString> for BigStringFormState {
     fn parse(&self) -> Result<BigString, ()> {
         return Ok(BigString(self.el.raw().dyn_ref::<HtmlTextAreaElement>().unwrap().value()));
     }
@@ -67,29 +59,15 @@ impl<C> FormWith<C> for BigString {
         _depth: usize,
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         let textarea =
-            el("textarea")
-                .classes(&[CSS_CLASS_SMALL_INPUT])
+            el("div")
+                .classes(&[CSS_CLASS_SMALL_INPUT, CSS_CLASS_TEXT])
                 .attr(ATTR_LABEL, field)
-                .text(from.map(|x| x.0.as_str()).unwrap_or(""))
-                .on("keydown", |e| {
-                    let area = e.target().unwrap().dyn_into::<Element>().unwrap();
-                    area.set_attribute("style", &format!("height: {}px", area.scroll_height() + 1)).unwrap();
-                })
-                .on_resize({
-                    let last_w = Cell::new(-1.);
-                    move |e, w, _h| {
-                        if (w - last_w.get()).abs() < 5. {
-                            return;
-                        }
-                        last_w.set(w);
-                        let area = e.raw().dyn_into::<Element>().unwrap();
-                        area.set_attribute("style", &format!("height: {}px", area.scroll_height() + 1)).unwrap();
-                    }
-                });
+                .attr("contenteditable", "plaintext-only")
+                .text(from.map(|x| x.0.as_str()).unwrap_or(""));
         return (FormElements {
             error: None,
             elements: vec![textarea.clone()],
-        }, Box::new(TextareaFormState { el: textarea }));
+        }, Box::new(BigStringFormState { el: textarea }));
     }
 }
 
@@ -103,28 +81,34 @@ impl FromStrFormState {
     pub fn new<
         E: Display,
         T: FromStr<Err = E>,
-    >(label: &str, type_: &str, initial_value: &str) -> (FormElements, Box<dyn FormState<T>>) {
-        let error_el = el("span").classes(&[CSS_CLASS_ERROR]);
+    >(label: &str, initial_value: &str) -> (FormElements, Box<dyn FormState<T>>) {
+        let error_el = err_el();
         let input_el =
-            el("input")
-                .classes(&[CSS_CLASS_SMALL_INPUT])
+            el("div")
+                .classes(&[CSS_CLASS_SMALL_INPUT, CSS_CLASS_TEXT])
                 .attr(ATTR_LABEL, label)
-                .attr("type", type_)
+                .attr("contenteditable", "plaintext-only")
                 .attr("value", initial_value)
-                .on("change", {
+                .on("input", {
                     let error_el = error_el.clone();
+                    let debounce = RefCell::new(None);
                     move |ev| {
-                        let text = ev.target().unwrap().dyn_ref::<HtmlInputElement>().unwrap().value();
-                        if text.len() >= 1 {
-                            match T::from_str(&text) {
-                                Err(e) => {
-                                    error_el.ref_text(&e.to_string());
-                                    return;
-                                },
-                                _ => { },
-                            }
-                        }
                         error_el.ref_text("");
+                        let text = ev.target().unwrap().dyn_ref::<HtmlInputElement>().unwrap().value();
+                        *debounce.borrow_mut() = Some(Timeout::new(300, {
+                            let error_el = error_el.clone();
+                            move || {
+                                if text.len() >= 1 {
+                                    match T::from_str(&text) {
+                                        Err(e) => {
+                                            error_el.ref_text(&e.to_string());
+                                            return;
+                                        },
+                                        _ => { },
+                                    }
+                                }
+                            }
+                        }));
                     }
                 });
         return (FormElements {
@@ -159,26 +143,7 @@ impl<C> FormWith<C> for String {
         from: Option<&Self>,
         _depth: usize,
     ) -> (FormElements, Box<dyn FormState<Self>>) {
-        return FromStrFormState::new::<_, String>(
-            field,
-            "text",
-            from.as_ref().map(|x| x.as_str()).unwrap_or(""),
-        );
-    }
-}
-
-impl<C> FormWith<C> for Password {
-    fn new_form_with_(
-        _context: &C,
-        field: &str,
-        from: Option<&Self>,
-        _depth: usize,
-    ) -> (FormElements, Box<dyn FormState<Self>>) {
-        return FromStrFormState::new::<_, Password>(
-            field,
-            "password",
-            from.as_ref().map(|x| x.0.as_str()).unwrap_or(""),
-        );
+        return FromStrFormState::new::<_, String>(field, from.as_ref().map(|x| x.as_str()).unwrap_or(""));
     }
 }
 
@@ -191,7 +156,6 @@ impl<C> FormWith<C> for u8 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -206,7 +170,6 @@ impl<C> FormWith<C> for u16 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -221,7 +184,6 @@ impl<C> FormWith<C> for u32 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -236,7 +198,6 @@ impl<C> FormWith<C> for u64 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -251,7 +212,6 @@ impl<C> FormWith<C> for i8 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -266,7 +226,6 @@ impl<C> FormWith<C> for i16 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -281,7 +240,6 @@ impl<C> FormWith<C> for i32 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -296,7 +254,6 @@ impl<C> FormWith<C> for i64 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -311,7 +268,6 @@ impl<C> FormWith<C> for f32 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
@@ -326,7 +282,6 @@ impl<C> FormWith<C> for f64 {
     ) -> (FormElements, Box<dyn FormState<Self>>) {
         return FromStrFormState::new::<_, Self>(
             field,
-            "text",
             from.map(|x| x.to_string()).as_ref().map(|x| x.as_str()).unwrap_or(""),
         );
     }
