@@ -1,6 +1,6 @@
 [package]
 name = "rooting-forms"
-version = "0.0.4"
+version = "0.1.0"
 edition = "2021"
 license = "ISC"
 description = "Generates HTML (rooting) forms from structures"
