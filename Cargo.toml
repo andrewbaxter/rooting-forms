@@ -1,6 +1,6 @@
 [package]
 name = "rooting-forms"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "ISC"
 description = "Generates HTML (rooting) forms from structures"
@@ -18,7 +18,7 @@ jiff = ["dep:jiff"]
 [dependencies]
 serde = { version = "1", optional = true }
 rooting = "0.1"
-rooting_forms_proc_macros = { version = "0.1.0", path = "proc_macros" }
+rooting_forms_proc_macros = { version = "0.2.0", path = "proc_macros" }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
     "HtmlSelectElement",
